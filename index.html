@@ -5,7 +5,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Post Office QR Scanner</title>
+
   <script src="https://unpkg.com/html5-qrcode"></script>
+
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -13,29 +15,59 @@
       margin: 25px auto;
       padding: 16px;
     }
-    h2, p { text-align: center; }
-    #reader { width: 100%; }
+
+    h2, p {
+      text-align: center;
+    }
+
+    #reader {
+      width: 100%;
+    }
+
     .btn {
       display: inline-block;
       padding: 12px 20px;
       background: #1a73e8;
       color: white;
       text-decoration: none;
+      border: none;
       border-radius: 6px;
       margin-top: 12px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+
+    .green {
+      background: #188038;
+    }
+
+    #openForm {
+      display: none;
     }
   </style>
 </head>
+
 <body>
+
   <h2>Post Office QR Scanner</h2>
+
   <p>Allow camera access and scan the QR code.</p>
+
   <div id="reader"></div>
+
   <p id="status">Waiting for QR code...</p>
+
   <p>
-    <a id="openForm" class="btn" href="#"
-       target="_self" style="display:none">
+    <button id="openForm" class="btn">
       Open Form to Complete Entry
-    </a>
+    </button>
+  </p>
+
+  <p>
+    <button id="scanNext" class="btn green"
+            style="display:none">
+      Scan Next QR
+    </button>
   </p>
 
   <script>
@@ -43,33 +75,89 @@
       "https://docs.google.com/forms/d/e/1FAIpQLSdbwzyvv0SbGIu6UtU9Q5oRsg0XXCBsguuli7ZnFYSzVb9BNw/viewform";
 
     const ENTRY_ID = "entry.1334642033";
+
     let processed = false;
+    let formUrl = "";
+    let scanner;
 
-   function onScanSuccess(decodedText) {
-  if (processed) return;
-  processed = true;
+    const status = document.getElementById("status");
+    const openForm = document.getElementById("openForm");
+    const scanNext = document.getElementById("scanNext");
 
-  document.getElementById("status").textContent =
-    "QR scanned successfully. Opening Google Form...";
+    function onScanSuccess(decodedText) {
+      if (processed) return;
 
-  const url = new URL(FORM_BASE_URL);
-  url.searchParams.set("usp", "pp_url");
-  url.searchParams.set(ENTRY_ID, decodedText);
+      processed = true;
 
-  window.top.location.href = url.toString();
-}
+      const url = new URL(FORM_BASE_URL);
+      url.searchParams.set("usp", "pp_url");
+      url.searchParams.set(ENTRY_ID, decodedText);
+
+      formUrl = url.toString();
+
+      status.textContent =
+        "QR scanned successfully. Tap below to complete the form.";
+
+      openForm.style.display = "inline-block";
+      scanNext.style.display = "none";
+    }
 
     function onScanFailure(error) {
       // Ignore unsuccessful camera frames.
     }
 
-    const scanner = new Html5QrcodeScanner(
-      "reader",
-      { fps: 10, qrbox: { width: 250, height: 250 } },
-      false
-    );
+    function startScanner() {
+      processed = false;
+      formUrl = "";
 
-    scanner.render(onScanSuccess, onScanFailure);
+      openForm.style.display = "none";
+      scanNext.style.display = "none";
+
+      status.textContent = "Waiting for QR code...";
+
+      scanner = new Html5QrcodeScanner(
+        "reader",
+        {
+          fps: 10,
+          qrbox: { width: 250, height: 250 }
+        },
+        false
+      );
+
+      scanner.render(onScanSuccess, onScanFailure);
+    }
+
+    // Open the prefilled Google Form in the SAME tab.
+    openForm.addEventListener("click", function () {
+      if (formUrl) {
+        window.location.assign(formUrl);
+      }
+    });
+
+    // Restart scanning if needed without opening a new tab.
+    scanNext.addEventListener("click", async function () {
+      scanNext.style.display = "none";
+
+      try {
+        await scanner.clear();
+      } catch (error) {
+        // The scanner may already have stopped.
+      }
+
+      document.getElementById("reader").innerHTML = "";
+      startScanner();
+    });
+
+    // When Chrome restores this page from its back-forward cache,
+    // reload it to initialise the camera and scanner again.
+    window.addEventListener("pageshow", function (event) {
+      if (event.persisted) {
+        window.location.reload();
+      }
+    });
+
+    startScanner();
   </script>
+
 </body>
 </html>
