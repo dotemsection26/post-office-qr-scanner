@@ -1,0 +1,77 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Post Office QR Scanner</title>
+  <script src="https://unpkg.com/html5-qrcode"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 500px;
+      margin: 25px auto;
+      padding: 16px;
+    }
+    h2, p { text-align: center; }
+    #reader { width: 100%; }
+    .btn {
+      display: inline-block;
+      padding: 12px 20px;
+      background: #1a73e8;
+      color: white;
+      text-decoration: none;
+      border-radius: 6px;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+  <h2>Post Office QR Scanner</h2>
+  <p>Allow camera access and scan the QR code.</p>
+  <div id="reader"></div>
+  <p id="status">Waiting for QR code...</p>
+  <p>
+    <a id="openForm" class="btn" href="#"
+       target="_top" style="display:none">
+      Open Form to Complete Entry
+    </a>
+  </p>
+
+  <script>
+    const FORM_BASE_URL =
+      "https://docs.google.com/forms/d/e/1FAIpQLSdbwzyvv0SbGIu6UtU9Q5oRsg0XXCBsguuli7ZnFYSzVb9BNw/viewform";
+
+    const ENTRY_ID = "entry.1334642033";
+    let processed = false;
+
+    function onScanSuccess(decodedText) {
+      if (processed) return;
+      processed = true;
+
+      document.getElementById("status").textContent =
+        "QR scanned successfully. Tap below to complete the form.";
+
+      const url = new URL(FORM_BASE_URL);
+      url.searchParams.set("usp", "pp_url");
+      url.searchParams.set(ENTRY_ID, decodedText);
+
+      const button = document.getElementById("openForm");
+      button.href = url.toString();
+      button.style.display = "inline-block";
+    }
+
+    function onScanFailure(error) {
+      // Ignore unsuccessful camera frames.
+    }
+
+    const scanner = new Html5QrcodeScanner(
+      "reader",
+      { fps: 10, qrbox: { width: 250, height: 250 } },
+      false
+    );
+
+    scanner.render(onScanSuccess, onScanFailure);
+  </script>
+</body>
+</html>
