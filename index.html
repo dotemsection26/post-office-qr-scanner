@@ -33,7 +33,7 @@
   <p id="status">Waiting for QR code...</p>
   <p>
     <a id="openForm" class="btn" href="#"
-       target="_top" style="display:none">
+       target="_self" style="display:none">
       Open Form to Complete Entry
     </a>
   </p>
@@ -45,21 +45,19 @@
     const ENTRY_ID = "entry.1334642033";
     let processed = false;
 
-    function onScanSuccess(decodedText) {
-      if (processed) return;
-      processed = true;
+   function onScanSuccess(decodedText) {
+  if (processed) return;
+  processed = true;
 
-      document.getElementById("status").textContent =
-        "QR scanned successfully. Tap below to complete the form.";
+  document.getElementById("status").textContent =
+    "QR scanned successfully. Opening Google Form...";
 
-      const url = new URL(FORM_BASE_URL);
-      url.searchParams.set("usp", "pp_url");
-      url.searchParams.set(ENTRY_ID, decodedText);
+  const url = new URL(FORM_BASE_URL);
+  url.searchParams.set("usp", "pp_url");
+  url.searchParams.set(ENTRY_ID, decodedText);
 
-      const button = document.getElementById("openForm");
-      button.href = url.toString();
-      button.style.display = "inline-block";
-    }
+  window.top.location.href = url.toString();
+}
 
     function onScanFailure(error) {
       // Ignore unsuccessful camera frames.
