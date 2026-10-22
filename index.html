@@ -12,7 +12,7 @@
     body {
       font-family: Arial, sans-serif;
       max-width: 500px;
-      margin: 25px auto;
+      margin: 20px auto;
       padding: 16px;
     }
 
@@ -29,10 +29,9 @@
       padding: 12px 20px;
       background: #1a73e8;
       color: white;
-      text-decoration: none;
       border: none;
       border-radius: 6px;
-      margin-top: 12px;
+      margin: 8px 4px;
       font-size: 16px;
       cursor: pointer;
     }
@@ -41,34 +40,46 @@
       background: #188038;
     }
 
-    #openForm {
+    #formSection {
       display: none;
+      margin-top: 20px;
+    }
+
+    #formFrame {
+      width: 100%;
+      height: 700px;
+      border: 0;
     }
   </style>
 </head>
 
 <body>
-
   <h2>Post Office QR Scanner</h2>
-
-  <p>Allow camera access and scan the QR code.</p>
+  <p id="status">Allow camera access and scan the QR code.</p>
 
   <div id="reader"></div>
 
-  <p id="status">Waiting for QR code...</p>
-
   <p>
-    <button id="openForm" class="btn">
-      Open Form to Complete Entry
+    <button id="openForm" class="btn" style="display:none">
+      Open Form
     </button>
-  </p>
 
-  <p>
-    <button id="scanNext" class="btn green"
-            style="display:none">
+    <button id="scanNext" class="btn green" style="display:none">
       Scan Next QR
     </button>
   </p>
+
+  <section id="formSection">
+    <h3>Complete Google Form</h3>
+    <iframe
+      id="formFrame"
+      title="Post Office Entry Form"
+      allow="camera">
+    </iframe>
+    <p>
+      After submitting the form, tap Scan Next QR above.
+    </p>
+  </section>
 
   <script>
     const FORM_BASE_URL =
@@ -76,42 +87,42 @@
 
     const ENTRY_ID = "entry.1334642033";
 
-    let processed = false;
-    let formUrl = "";
-    let scanner;
-
+    const reader = document.getElementById("reader");
     const status = document.getElementById("status");
     const openForm = document.getElementById("openForm");
     const scanNext = document.getElementById("scanNext");
+    const formSection = document.getElementById("formSection");
+    const formFrame = document.getElementById("formFrame");
 
-    function onScanSuccess(decodedText) {
-      if (processed) return;
+    let scanner = null;
+    let processed = false;
+    let pendingUrl = "";
 
-      processed = true;
+    async function stopScanner() {
+      if (scanner) {
+        try {
+          await scanner.clear();
+        } catch (error) {
+          console.log("Scanner already stopped", error);
+        }
+        scanner = null;
+      }
 
-      const url = new URL(FORM_BASE_URL);
-      url.searchParams.set("usp", "pp_url");
-      url.searchParams.set(ENTRY_ID, decodedText);
-
-      formUrl = url.toString();
-
-      status.textContent =
-        "QR scanned successfully. Tap below to complete the form.";
-
-      openForm.style.display = "inline-block";
-      scanNext.style.display = "none";
+      reader.innerHTML = "";
     }
 
-    function onScanFailure(error) {
-      // Ignore unsuccessful camera frames.
-    }
+    async function startScanner() {
+      await stopScanner();
 
-    function startScanner() {
       processed = false;
-      formUrl = "";
+      pendingUrl = "";
+
+      formSection.style.display = "none";
+      formFrame.src = "about:blank";
 
       openForm.style.display = "none";
       scanNext.style.display = "none";
+      reader.style.display = "block";
 
       status.textContent = "Waiting for QR code...";
 
@@ -124,40 +135,50 @@
         false
       );
 
-      scanner.render(onScanSuccess, onScanFailure);
+      scanner.render(onScanSuccess, function () {});
     }
 
-    // Open the prefilled Google Form in the SAME tab.
+    async function onScanSuccess(decodedText) {
+      if (processed) return;
+      processed = true;
+
+      const url = new URL(FORM_BASE_URL);
+      url.searchParams.set("usp", "pp_url");
+      url.searchParams.set(ENTRY_ID, decodedText);
+
+      pendingUrl = url.toString();
+
+      status.textContent = "QR scanned successfully.";
+
+      await stopScanner();
+
+      reader.style.display = "none";
+      openForm.style.display = "inline-block";
+      scanNext.style.display = "inline-block";
+
+      status.textContent =
+        "QR scanned. Tap Open Form to complete the entry.";
+    }
+
     openForm.addEventListener("click", function () {
-      if (formUrl) {
-        window.location.assign(formUrl);
-      }
+      if (!pendingUrl) return;
+
+      const url = new URL(pendingUrl);
+      url.searchParams.set("embedded", "true");
+
+      formFrame.src = url.toString();
+      formSection.style.display = "block";
+      openForm.style.display = "none";
+
+      status.textContent =
+        "Complete and submit the form below.";
     });
 
-    // Restart scanning if needed without opening a new tab.
     scanNext.addEventListener("click", async function () {
-      scanNext.style.display = "none";
-
-      try {
-        await scanner.clear();
-      } catch (error) {
-        // The scanner may already have stopped.
-      }
-
-      document.getElementById("reader").innerHTML = "";
-      startScanner();
-    });
-
-    // When Chrome restores this page from its back-forward cache,
-    // reload it to initialise the camera and scanner again.
-    window.addEventListener("pageshow", function (event) {
-      if (event.persisted) {
-        window.location.reload();
-      }
+      await startScanner();
     });
 
     startScanner();
   </script>
-
 </body>
 </html>
