@@ -5,7 +5,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Post Office QR Scanner</title>
-
   <script src="https://unpkg.com/html5-qrcode"></script>
 
   <style>
@@ -16,69 +15,48 @@
       padding: 16px;
     }
 
-    h2, p {
-      text-align: center;
-    }
+    h2, p { text-align: center; }
 
-    #reader {
-      width: 100%;
-    }
+    #reader { width: 100%; }
 
     .btn {
       display: inline-block;
-      padding: 12px 20px;
+      padding: 12px 16px;
       background: #1a73e8;
       color: white;
-      border: none;
+      border: 0;
       border-radius: 6px;
-      margin: 8px 4px;
+      margin: 6px 3px;
       font-size: 16px;
       cursor: pointer;
     }
 
-    .green {
-      background: #188038;
-    }
-
-    #formSection {
-      display: none;
-      margin-top: 20px;
-    }
+    .green { background: #188038; }
 
     #formFrame {
       width: 100%;
-      height: 700px;
-      border: 0;
+      height: 650px;
+      border: 1px solid #ccc;
     }
+
+    #formSection { display: none; }
   </style>
 </head>
 
 <body>
   <h2>Post Office QR Scanner</h2>
-  <p id="status">Allow camera access and scan the QR code.</p>
+  <p id="status">Starting scanner...</p>
 
   <div id="reader"></div>
 
   <p>
-    <button id="openForm" class="btn" style="display:none">
-      Open Form
-    </button>
-
-    <button id="scanNext" class="btn green" style="display:none">
-      Scan Next QR
-    </button>
+    <button id="openForm" class="btn">Open Form</button>
+    <button id="scanNext" class="btn green">Scan Next QR</button>
   </p>
 
   <section id="formSection">
     <h3>Complete Google Form</h3>
-    <iframe
-      id="formFrame"
-      title="Post Office Entry Form"
-      allow="camera">
-    </iframe>
-    <p>
-      After submitting the form, tap Scan Next QR above.
-    </p>
+    <iframe id="formFrame" title="Google Form"></iframe>
   </section>
 
   <script>
@@ -87,8 +65,8 @@
 
     const ENTRY_ID = "entry.1334642033";
 
-    const reader = document.getElementById("reader");
     const status = document.getElementById("status");
+    const reader = document.getElementById("reader");
     const openForm = document.getElementById("openForm");
     const scanNext = document.getElementById("scanNext");
     const formSection = document.getElementById("formSection");
@@ -96,18 +74,18 @@
 
     let scanner = null;
     let processed = false;
-    let pendingUrl = "";
+    let formUrl = "";
 
     async function stopScanner() {
       if (scanner) {
-        try {
-          await scanner.clear();
-        } catch (error) {
-          console.log("Scanner already stopped", error);
-        }
+        const oldScanner = scanner;
         scanner = null;
+        try {
+          await oldScanner.clear();
+        } catch (e) {
+          console.log(e);
+        }
       }
-
       reader.innerHTML = "";
     }
 
@@ -115,67 +93,58 @@
       await stopScanner();
 
       processed = false;
-      pendingUrl = "";
+      formUrl = "";
 
+      reader.style.display = "block";
       formSection.style.display = "none";
       formFrame.src = "about:blank";
 
-      openForm.style.display = "none";
-      scanNext.style.display = "none";
-      reader.style.display = "block";
-
-      status.textContent = "Waiting for QR code...";
+      status.textContent = "Point the camera at a QR code.";
 
       scanner = new Html5QrcodeScanner(
         "reader",
-        {
-          fps: 10,
-          qrbox: { width: 250, height: 250 }
-        },
+        { fps: 10, qrbox: { width: 250, height: 250 } },
         false
       );
 
-      scanner.render(onScanSuccess, function () {});
-    }
+      scanner.render(
+        async function (decodedText) {
+          if (processed) return;
+          processed = true;
 
-    async function onScanSuccess(decodedText) {
-      if (processed) return;
-      processed = true;
+          const url = new URL(FORM_BASE_URL);
+          url.searchParams.set("usp", "pp_url");
+          url.searchParams.set(ENTRY_ID, decodedText);
+          formUrl = url.toString();
 
-      const url = new URL(FORM_BASE_URL);
-      url.searchParams.set("usp", "pp_url");
-      url.searchParams.set(ENTRY_ID, decodedText);
+          status.textContent =
+            "QR scanned. Tap Open Form to complete the entry.";
 
-      pendingUrl = url.toString();
-
-      status.textContent = "QR scanned successfully.";
-
-      await stopScanner();
-
-      reader.style.display = "none";
-      openForm.style.display = "inline-block";
-      scanNext.style.display = "inline-block";
-
-      status.textContent =
-        "QR scanned. Tap Open Form to complete the entry.";
+          await stopScanner();
+        },
+        function () {}
+      );
     }
 
     openForm.addEventListener("click", function () {
-      if (!pendingUrl) return;
+      if (!formUrl) {
+        status.textContent =
+          "Please scan a QR code first. Then tap Open Form.";
+        return;
+      }
 
-      const url = new URL(pendingUrl);
+      const url = new URL(formUrl);
       url.searchParams.set("embedded", "true");
 
       formFrame.src = url.toString();
       formSection.style.display = "block";
-      openForm.style.display = "none";
 
       status.textContent =
         "Complete and submit the form below.";
     });
 
-    scanNext.addEventListener("click", async function () {
-      await startScanner();
+    scanNext.addEventListener("click", function () {
+      startScanner();
     });
 
     startScanner();
