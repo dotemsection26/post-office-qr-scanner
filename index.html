@@ -1,9 +1,10 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Post Office Number Scanner</title>
+  <title>Post Office Barcode Number Scanner</title>
 
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
@@ -15,7 +16,9 @@
       padding: 14px;
     }
 
-    h2, p { text-align: center; }
+    h2, p {
+      text-align: center;
+    }
 
     video {
       width: 100%;
@@ -25,8 +28,8 @@
 
     .guide {
       border: 2px dashed #1a73e8;
-      padding: 8px;
-      margin: 8px 0;
+      padding: 10px;
+      margin: 10px 0;
       text-align: center;
       color: #1a73e8;
       border-radius: 6px;
@@ -44,6 +47,7 @@
       padding: 13px;
       font-size: 20px;
       margin-top: 6px;
+      text-transform: uppercase;
     }
 
     button {
@@ -63,10 +67,18 @@
       cursor: not-allowed;
     }
 
-    .green { background: #188038; }
-    .orange { background: #b45f06; }
+    .green {
+      background: #188038;
+    }
 
-    #formSection { display: none; }
+    .orange {
+      background: #b45f06;
+    }
+
+    #formSection {
+      display: none;
+      margin-top: 20px;
+    }
 
     iframe {
       width: 100%;
@@ -81,30 +93,39 @@
 </head>
 
 <body>
-  <h2>Post Office Number Scanner</h2>
+
+  <h2>Post Office Barcode Scanner</h2>
 
   <p>
-    Position the printed numbers near the barcode in the camera view.
+    Position the printed alphanumeric code below the barcode
+    clearly in the camera view.
   </p>
 
   <video id="video" autoplay playsinline muted></video>
 
   <div class="guide">
-    Hold steady and keep the printed numbers clearly visible.
+    Keep the printed letters and numbers in focus.
+    Avoid glare and hold the phone steady.
   </div>
 
   <button id="captureBtn" disabled>
-    Capture &amp; Read Numbers
+    Capture &amp; Read Code
   </button>
 
   <p id="status">Starting camera...</p>
 
-  <label for="number">Detected number (check and correct if needed)</label>
-  <input id="number" type="text" inputmode="numeric"
-         autocomplete="off" placeholder="Detected number will appear here">
+  <label for="code">Detected Alphanumeric Code</label>
+
+  <input
+    id="code"
+    type="text"
+    autocomplete="off"
+    autocapitalize="characters"
+    placeholder="Code will appear here"
+  >
 
   <button id="openForm" disabled>
-    Open Form with This Number
+    Open Form with This Code
   </button>
 
   <button id="scanNext" class="green">
@@ -112,13 +133,21 @@
   </button>
 
   <button id="retryBtn" class="orange">
-    Capture Again
+    Clear and Capture Again
   </button>
 
   <section id="formSection">
     <h3>Complete Google Form</h3>
-    <p>Submit the form, then tap Scan Next Item above.</p>
-    <iframe id="formFrame" title="Google Form"></iframe>
+
+    <p>
+      Check the prefilled value, complete the form,
+      and submit it.
+    </p>
+
+    <iframe
+      id="formFrame"
+      title="Post Office Google Form">
+    </iframe>
   </section>
 
   <canvas id="canvas" hidden></canvas>
@@ -131,7 +160,7 @@
 
     const video = document.getElementById("video");
     const canvas = document.getElementById("canvas");
-    const numberInput = document.getElementById("number");
+    const codeInput = document.getElementById("code");
     const captureBtn = document.getElementById("captureBtn");
     const openFormBtn = document.getElementById("openForm");
     const scanNextBtn = document.getElementById("scanNext");
@@ -144,50 +173,64 @@
     let ocrWorker = null;
     let reading = false;
 
+    // Start the rear camera on Android.
     async function startCamera() {
       try {
-        if (!navigator.mediaDevices?.getUserMedia) {
-          throw new Error("Camera requires HTTPS and browser support.");
+        if (!navigator.mediaDevices ||
+            !navigator.mediaDevices.getUserMedia) {
+          throw new Error(
+            "Camera requires HTTPS. Open the deployed HTTPS website."
+          );
         }
 
-        cameraStream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: {
-            facingMode: { ideal: "environment" },
-            width: { ideal: 1920 },
-            height: { ideal: 1080 }
-          }
-        });
+        cameraStream =
+          await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: {
+              facingMode: { ideal: "environment" },
+              width: { ideal: 1920 },
+              height: { ideal: 1080 }
+            }
+          });
 
         video.srcObject = cameraStream;
         await video.play();
 
         captureBtn.disabled = false;
+
         status.textContent =
-          "Camera ready. Position the printed number and capture.";
+          "Camera ready. Position the code and capture.";
+
       } catch (error) {
         status.textContent =
           "Camera error: " + error.message +
-          ". Allow camera access and reload this HTTPS page.";
+          ". Allow camera access and reload the page.";
       }
     }
 
+    // Load OCR once and reuse it for subsequent scans.
     async function getOCRWorker() {
       if (!ocrWorker) {
-        status.textContent = "Loading text recognition. Please wait...";
+        status.textContent =
+          "Loading text recognition. Please wait...";
+
         ocrWorker = await Tesseract.createWorker("eng");
+
         await ocrWorker.setParameters({
-          tessedit_char_whitelist: "0123456789",
-          tessedit_pageseg_mode: "7"
+          tessedit_char_whitelist:
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+          tessedit_pageseg_mode: "11"
         });
       }
 
       return ocrWorker;
     }
 
-    async function readNumber() {
+    // Capture the camera image and recognise alphanumeric text.
+    async function readCode() {
       if (reading) return;
-      if (!video.videoWidth) {
+
+      if (!video.videoWidth || !video.videoHeight) {
         status.textContent = "Camera is not ready. Please wait.";
         return;
       }
@@ -195,10 +238,10 @@
       reading = true;
       captureBtn.disabled = true;
       openFormBtn.disabled = true;
-      status.textContent = "Reading numbers from image...";
 
       try {
-        // Capture the camera image.
+        status.textContent = "Capturing image...";
+
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
 
@@ -206,9 +249,11 @@
           willReadFrequently: true
         });
 
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        ctx.drawImage(
+          video, 0, 0, canvas.width, canvas.height
+        );
 
-        // Increase contrast and convert to black and white.
+        // Improve contrast for printed text.
         const image = ctx.getImageData(
           0, 0, canvas.width, canvas.height
         );
@@ -229,87 +274,126 @@
         ctx.putImageData(image, 0, 0);
 
         const worker = await getOCRWorker();
-        status.textContent = "Recognising printed digits...";
+
+        status.textContent = "Recognising letters and numbers...";
 
         const result = await worker.recognize(canvas);
         const text = result.data.text || "";
 
-        // Extract the longest digit sequence.
-        const groups = text.match(/[0-9]+/g) || [];
-        groups.sort((a, b) => b.length - a.length);
+        // Preserve alphanumeric sequences.
+        // Prefer candidates containing both letters and digits.
+        const candidates = text
+          .toUpperCase()
+          .split(/\s+/)
+          .map(value => value.replace(/[^A-Z0-9]/g, ""))
+          .filter(value => value.length > 0);
 
-        if (!groups.length) {
-          status.textContent =
-            "No digits detected. Move closer, improve lighting and try again.";
-          numberInput.value = "";
+        const mixedCandidates = candidates.filter(
+          value => /[A-Z]/.test(value) &&
+                   /[0-9]/.test(value)
+        );
+
+        const usableCandidates =
+          mixedCandidates.length > 0
+            ? mixedCandidates
+            : candidates;
+
+        usableCandidates.sort(
+          (a, b) => b.length - a.length
+        );
+
+        if (usableCandidates.length === 0) {
+          codeInput.value = "";
           openFormBtn.disabled = true;
+
+          status.textContent =
+            "No code detected. Move closer, improve lighting, and try again.";
+
         } else {
-          numberInput.value = groups[0];
+          codeInput.value = usableCandidates[0];
           openFormBtn.disabled = false;
 
           status.textContent =
-            "Digits detected. Verify the number before opening the form.";
+            "Code detected. Verify every letter and digit before proceeding.";
         }
+
       } catch (error) {
         status.textContent =
-          "Recognition failed: " + error.message +
-          ". Please try capturing again.";
+          "Recognition error: " + error.message;
+
       } finally {
         reading = false;
         captureBtn.disabled = false;
       }
     }
 
-    numberInput.addEventListener("input", function () {
-      openFormBtn.disabled = !numberInput.value.trim();
+    // Enable the form button when a code is entered.
+    codeInput.addEventListener("input", function () {
+      openFormBtn.disabled =
+        codeInput.value.trim().length === 0;
     });
 
+    // Open the prefilled form within this webpage.
     openFormBtn.addEventListener("click", function () {
-      const number = numberInput.value.trim();
+      const code = codeInput.value.trim();
 
-      if (!number) {
-        status.textContent = "Please detect or enter a number first.";
+      if (!code) {
+        status.textContent =
+          "Please capture or enter a code first.";
         return;
       }
 
       const url = new URL(FORM_BASE_URL);
+
       url.searchParams.set("usp", "pp_url");
-      url.searchParams.set(ENTRY_ID, number);
+      url.searchParams.set(ENTRY_ID, code);
       url.searchParams.set("embedded", "true");
 
       formFrame.src = url.toString();
       formSection.style.display = "block";
 
       status.textContent =
-        "Verify the prefilled number, complete and submit the form.";
+        "Verify the code, complete the form, and submit.";
 
-      formSection.scrollIntoView({ behavior: "smooth" });
+      formSection.scrollIntoView({
+        behavior: "smooth"
+      });
     });
 
+    // Prepare for another item without leaving the scanner page.
     scanNextBtn.addEventListener("click", function () {
-      numberInput.value = "";
+      codeInput.value = "";
       openFormBtn.disabled = true;
 
       formFrame.src = "about:blank";
       formSection.style.display = "none";
 
       status.textContent =
-        "Ready for the next item. Position the printed number and capture.";
+        "Ready for the next item. Capture the printed code.";
 
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      window.scrollTo({
+        top: 0,
+        behavior: "smooth"
+      });
     });
 
     retryBtn.addEventListener("click", function () {
-      numberInput.value = "";
+      codeInput.value = "";
       openFormBtn.disabled = true;
-      status.textContent = "Ready. Capture the printed number again.";
+
+      status.textContent =
+        "Position the code clearly and tap Capture & Read Code.";
     });
 
-    captureBtn.addEventListener("click", readNumber);
+    captureBtn.addEventListener("click", readCode);
 
+    // Release the camera when leaving the page.
     window.addEventListener("pagehide", function () {
       if (cameraStream) {
-        cameraStream.getTracks().forEach(track => track.stop());
+        cameraStream.getTracks().forEach(
+          track => track.stop()
+        );
+        cameraStream = null;
       }
 
       if (ocrWorker) {
@@ -320,5 +404,6 @@
 
     startCamera();
   </script>
+
 </body>
 </html>
