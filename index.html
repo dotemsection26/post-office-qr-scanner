@@ -1,421 +1,212 @@
-
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Post Office Code Scanner</title>
-
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      max-width: 500px;
-      margin: 20px auto;
-      padding: 14px;
-    }
-
-    h2, p { text-align: center; }
-
-    video {
-      width: 100%;
-      border-radius: 8px;
-      background: #222;
-    }
-
-    button {
-      width: 100%;
-      padding: 13px;
-      margin-top: 10px;
-      border: 0;
-      border-radius: 6px;
-      color: white;
-      background: #1a73e8;
-      font-size: 16px;
-      cursor: pointer;
-    }
-
-    button:disabled {
-      background: #999;
-    }
-
-    .green { background: #188038; }
-    .orange { background: #b45f06; }
-
-    label {
-      display: block;
-      margin-top: 14px;
-      font-weight: bold;
-    }
-
-    input, textarea {
-      box-sizing: border-box;
-      width: 100%;
-      padding: 12px;
-      margin-top: 6px;
-      font-size: 18px;
-    }
-
-    #rawText {
-      min-height: 100px;
-      font-size: 14px;
-      background: #f5f5f5;
-    }
-
-    #formSection { display: none; }
-
-    iframe {
-      width: 100%;
-      height: 650px;
-      border: 0;
-    }
-
-    #status {
-      font-weight: bold;
-    }
-
-    .hint {
-      background: #eef4ff;
-      padding: 10px;
-      border-radius: 6px;
-      font-size: 14px;
-    }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Speed Post Label Scanner</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 0; padding: 16px; max-width: 760px; margin-inline: auto; color: #222; }
+  h2 { margin-top: 0; }
+  button { font-size: 16px; padding: 12px 16px; margin: 6px 4px 6px 0; border: 0; border-radius: 8px; background: #174ea6; color: white; }
+  button.secondary { background: #555; }
+  button:disabled { opacity: .5; }
+  video { width: 100%; max-height: 55vh; background: #111; border-radius: 8px; }
+  canvas, #cropPreview { width: 100%; max-height: 220px; object-fit: contain; border: 1px solid #ccc; border-radius: 6px; background: #fafafa; }
+  label { display: block; margin-top: 12px; font-weight: bold; }
+  input { width: 100%; box-sizing: border-box; font-size: 20px; padding: 10px; margin-top: 6px; }
+  #status { padding: 10px; background: #f1f3f4; border-radius: 6px; min-height: 22px; white-space: pre-wrap; }
+  #formFrame { width: 100%; height: 70vh; border: 1px solid #bbb; margin-top: 14px; }
+  .hint { color: #555; font-size: 14px; line-height: 1.45; }
+</style>
 </head>
-
 <body>
+<h2>Speed Post Label Scanner</h2>
+<p class="hint">Keep the barcode and the printed consignment number below it fully visible. Allow camera access when prompted.</p>
 
-  <h2>Post Office Code Scanner</h2>
+<video id="video" autoplay playsinline muted></video>
+<div>
+  <button id="startBtn">Start camera</button>
+  <button id="scanBtn" disabled>Detect barcode & read number</button>
+  <button id="stopBtn" class="secondary" disabled>Stop camera</button>
+</div>
+<div id="status">Ready. Start the camera to begin.</div>
 
-  <p>Keep the printed letters and numbers below the barcode
-     clearly visible in the camera.</p>
+<label for="code">Detected consignment number (check before submitting)</label>
+<input id="code" autocomplete="off" autocapitalize="characters" placeholder="e.g. ED276659005IN">
+<div>
+  <button id="openFormBtn" disabled>Open Google Form with this number</button>
+  <button id="againBtn" class="secondary" disabled>Scan next item</button>
+</div>
 
-  <video id="video" autoplay playsinline muted></video>
+<h3>Text crop preview</h3>
+<p class="hint">This preview shows the area cropped from directly below the detected barcode.</p>
+<canvas id="cropPreview" width="800" height="180"></canvas>
+<canvas id="work" hidden></canvas>
 
-  <button id="captureBtn" disabled>
-    Capture &amp; Recognise Code
-  </button>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script>
+(() => {
+  const FORM_BASE_URL = "https://docs.google.com/forms/d/e/1FAIpQLSdbwzyvv0SbGIu6UtU9Q5oRsg0XXCBsguuli7ZnFYSzVb9BNw/viewform";
+  const ENTRY_ID = "entry.1334642033";
 
-  <p id="status">Starting camera...</p>
+  const video = document.getElementById("video");
+  const statusEl = document.getElementById("status");
+  const codeInput = document.getElementById("code");
+  const startBtn = document.getElementById("startBtn");
+  const scanBtn = document.getElementById("scanBtn");
+  const stopBtn = document.getElementById("stopBtn");
+  const openFormBtn = document.getElementById("openFormBtn");
+  const againBtn = document.getElementById("againBtn");
+  const preview = document.getElementById("cropPreview");
+  const work = document.getElementById("work");
+  let stream = null;
+  let scanning = false;
+  let worker = null;
 
-  <label for="code">Detected Code — Verify Before Use</label>
-  <input id="code" type="text"
-         autocomplete="off"
-         placeholder="Letters and numbers appear here">
+  function status(message) { statusEl.textContent = message; }
+  function cleanCode(text) {
+    return (text || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  }
 
-  <button id="openForm" disabled>
-    Open Prefilled Google Form
-  </button>
-
-  <button id="scanNext" class="green">
-    Scan Next Item
-  </button>
-
-  <button id="retryBtn" class="orange">
-    Clear and Try Again
-  </button>
-
-  <p class="hint">
-    If recognition fails, check the OCR text below.
-    It helps identify whether the camera can read the printed code.
-  </p>
-
-  <label for="rawText">OCR Diagnostic Text</label>
-  <textarea id="rawText" readonly
-    placeholder="Recognised text will appear here"></textarea>
-
-  <section id="formSection">
-    <h3>Complete Google Form</h3>
-    <p>Submit the form, then tap Scan Next Item.</p>
-    <iframe id="formFrame" title="Google Form"></iframe>
-  </section>
-
-  <canvas id="canvas" hidden></canvas>
-  <canvas id="processedCanvas" hidden></canvas>
-
-  <script>
-    const FORM_BASE_URL =
-      "https://docs.google.com/forms/d/e/1FAIpQLSdbwzyvv0SbGIu6UtU9Q5oRsg0XXCBsguuli7ZnFYSzVb9BNw/viewform";
-
-    const ENTRY_ID = "entry.1334642033";
-
-    const video = document.getElementById("video");
-    const canvas = document.getElementById("canvas");
-    const processedCanvas =
-      document.getElementById("processedCanvas");
-
-    const codeInput = document.getElementById("code");
-    const rawText = document.getElementById("rawText");
-    const status = document.getElementById("status");
-
-    const captureBtn = document.getElementById("captureBtn");
-    const openFormBtn = document.getElementById("openForm");
-    const scanNextBtn = document.getElementById("scanNext");
-    const retryBtn = document.getElementById("retryBtn");
-
-    const formSection = document.getElementById("formSection");
-    const formFrame = document.getElementById("formFrame");
-
-    let cameraStream = null;
-    let ocrWorker = null;
-    let reading = false;
-
-    async function startCamera() {
-      try {
-        if (!navigator.mediaDevices?.getUserMedia) {
-          throw new Error("Please open the HTTPS website in Chrome.");
-        }
-
-        cameraStream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: {
-            facingMode: { ideal: "environment" },
-            width: { ideal: 1920 },
-            height: { ideal: 1080 }
-          }
-        });
-
-        video.srcObject = cameraStream;
-        await video.play();
-
-        captureBtn.disabled = false;
-        status.textContent =
-          "Camera ready. Hold steady and capture the printed code.";
-
-      } catch (error) {
-        status.textContent =
-          "Camera error: " + error.message +
-          ". Allow camera access and reload the page.";
+  async function startCamera() {
+    try {
+      if (!("BarcodeDetector" in window)) {
+        status("This Chrome version does not provide BarcodeDetector. Please update Chrome and try again.");
+        return;
       }
-    }
-
-    async function getWorker() {
-      if (!ocrWorker) {
-        status.textContent =
-          "Loading OCR engine. First use may take some time...";
-
-        ocrWorker = await Tesseract.createWorker("eng");
-
-        await ocrWorker.setParameters({
-          tessedit_char_whitelist:
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
-          preserve_interword_spaces: "1"
-        });
-      }
-
-      return ocrWorker;
-    }
-
-    function makeEnhancedImage() {
-      const w = video.videoWidth;
-      const h = video.videoHeight;
-
-      if (!w || !h) {
-        throw new Error("Camera image is not ready.");
-      }
-
-      // Keep the original image and enlarge it 2x.
-      canvas.width = w;
-      canvas.height = h;
-
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(video, 0, 0, w, h);
-
-      processedCanvas.width = w * 2;
-      processedCanvas.height = h * 2;
-
-      const pctx = processedCanvas.getContext("2d", {
-        willReadFrequently: true
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }
       });
-
-      pctx.imageSmoothingEnabled = true;
-      pctx.imageSmoothingQuality = "high";
-      pctx.drawImage(
-        canvas, 0, 0,
-        processedCanvas.width,
-        processedCanvas.height
-      );
-
-      // Moderate contrast enhancement, not hard thresholding.
-      const image = pctx.getImageData(
-        0, 0,
-        processedCanvas.width,
-        processedCanvas.height
-      );
-
-      for (let i = 0; i < image.data.length; i += 4) {
-        const gray =
-          0.299 * image.data[i] +
-          0.587 * image.data[i + 1] +
-          0.114 * image.data[i + 2];
-
-        const enhanced = Math.max(
-          0, Math.min(255, (gray - 128) * 1.35 + 128)
-        );
-
-        image.data[i] = enhanced;
-        image.data[i + 1] = enhanced;
-        image.data[i + 2] = enhanced;
-      }
-
-      pctx.putImageData(image, 0, 0);
+      video.srcObject = stream;
+      await video.play();
+      scanBtn.disabled = false;
+      stopBtn.disabled = false;
+      startBtn.disabled = true;
+      status("Camera ready. Hold the full barcode steady, with the printed number visible below it, then tap Detect barcode & read number.");
+    } catch (err) {
+      status("Could not start camera: " + (err.name || "") + " " + (err.message || err) +
+        "\nOpen this page using its HTTPS GitHub Pages address and allow Camera permission in Chrome site settings.");
     }
+  }
 
-    function findCandidates(text) {
-      // Search individual lines, allowing spaces or hyphens
-      // between characters in the printed code.
-      const lines = text.toUpperCase().split(/\r?\n/);
-      const candidates = [];
+  function stopCamera() {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = null;
+    video.srcObject = null;
+    startBtn.disabled = false;
+    scanBtn.disabled = true;
+    stopBtn.disabled = true;
+    status("Camera stopped.");
+  }
 
-      for (const line of lines) {
-        const cleaned = line.replace(/[^A-Z0-9]/g, "");
-
-        if (cleaned.length >= 3) {
-          candidates.push(cleaned);
-        }
-
-        const matches = line.match(/[A-Z0-9]+/g) || [];
-
-        for (const item of matches) {
-          if (item.length >= 3) {
-            candidates.push(item);
-          }
-        }
-      }
-
-      // Prefer longer candidates; remove duplicate results.
-      return [...new Set(candidates)].sort(
-        (a, b) => b.length - a.length
-      );
+  async function getOcrWorker() {
+    if (!worker) {
+      status("Loading OCR engine… this may take a little while on first use.");
+      worker = await Tesseract.createWorker("eng");
+      await worker.setParameters({
+        tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+        preserve_interword_spaces: "0"
+      });
     }
+    return worker;
+  }
 
-    async function recogniseCode() {
-      if (reading) return;
-
-      reading = true;
-      captureBtn.disabled = true;
-      openFormBtn.disabled = true;
-      rawText.value = "";
-
-      try {
-        status.textContent = "Preparing image...";
-        makeEnhancedImage();
-
-        const worker = await getWorker();
-        const results = [];
-
-        // Pass 1: recognise text in the enlarged image.
-        status.textContent = "Recognition attempt 1 of 2...";
-        await worker.setParameters({
-          tessedit_pageseg_mode: "11"
-        });
-
-        const result1 = await worker.recognize(processedCanvas);
-        results.push(result1.data.text || "");
-
-        // Pass 2: treat the image as a single text line.
-        status.textContent = "Recognition attempt 2 of 2...";
-        await worker.setParameters({
-          tessedit_pageseg_mode: "7"
-        });
-
-        const result2 = await worker.recognize(processedCanvas);
-        results.push(result2.data.text || "");
-
-        rawText.value = results
-          .map((text, i) => "Attempt " + (i + 1) + ":\n" + text)
-          .join("\n\n");
-
-        const candidates = results.flatMap(findCandidates);
-
-        candidates.sort((a, b) => b.length - a.length);
-
-        if (candidates.length === 0) {
-          codeInput.value = "";
-          status.textContent =
-            "No usable code detected. Move closer, improve focus, and try again.";
-        } else {
-          codeInput.value = candidates[0];
-          status.textContent =
-            "Possible code detected. Verify every character before opening the form.";
-        }
-
-        openFormBtn.disabled = !codeInput.value.trim();
-
-      } catch (error) {
-        status.textContent =
-          "OCR error: " + error.message;
-      } finally {
-        reading = false;
-        captureBtn.disabled = false;
-      }
-    }
-
-    codeInput.addEventListener("input", function () {
-      openFormBtn.disabled = !codeInput.value.trim();
-    });
-
-    openFormBtn.addEventListener("click", function () {
-      const value = codeInput.value.trim();
-
-      if (!value) {
-        status.textContent = "Enter the code first.";
+  async function detectAndRead() {
+    if (!video.videoWidth || scanning) return;
+    scanning = true;
+    scanBtn.disabled = true;
+    openFormBtn.disabled = true;
+    try {
+      const detector = new BarcodeDetector({
+        formats: ["code_128", "code_39", "code_93", "codabar", "itf", "ean_13", "ean_8", "upc_a", "upc_e"]
+      });
+      status("Looking for the barcode…");
+      const found = await detector.detect(video);
+      if (!found.length) {
+        status("No barcode detected. Move closer, keep the label flat and well lit, and try again.");
         return;
       }
 
-      const url = new URL(FORM_BASE_URL);
-      url.searchParams.set("usp", "pp_url");
-      url.searchParams.set(ENTRY_ID, value);
+      // Prefer the widest detected 1D barcode.
+      const item = found.slice().sort((a, b) => b.boundingBox.width - a.boundingBox.width)[0];
+      const b = item.boundingBox;
+      const vw = video.videoWidth, vh = video.videoHeight;
 
-      formFrame.src = url.toString();
-      formSection.style.display = "block";
-
-      status.textContent =
-        "Check the prefilled value and complete the form.";
-
-      formSection.scrollIntoView({ behavior: "smooth" });
-    });
-
-    scanNextBtn.addEventListener("click", function () {
-      codeInput.value = "";
-      rawText.value = "";
-      openFormBtn.disabled = true;
-
-      formFrame.src = "about:blank";
-      formSection.style.display = "none";
-
-      status.textContent =
-        "Ready for the next item. Position the printed code and capture.";
-
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    });
-
-    retryBtn.addEventListener("click", function () {
-      codeInput.value = "";
-      rawText.value = "";
-      openFormBtn.disabled = true;
-
-      status.textContent =
-        "Try again. Move the camera closer to the printed code.";
-    });
-
-    captureBtn.addEventListener("click", recogniseCode);
-
-    window.addEventListener("pagehide", function () {
-      if (cameraStream) {
-        cameraStream.getTracks().forEach(track => track.stop());
-        cameraStream = null;
+      // Crop just below the bars, where the printed consignment number is expected.
+      const sx = Math.max(0, Math.floor(b.x - b.width * 0.08));
+      const sw = Math.min(vw - sx, Math.ceil(b.width * 1.16));
+      const sy = Math.max(0, Math.floor(b.y + b.height * 0.88));
+      const sh = Math.min(vh - sy, Math.max(Math.ceil(b.height * 0.62), 55));
+      if (sh < 10 || sw < 10) {
+        status("Barcode was detected, but the number below it is outside the camera frame. Move the label slightly upward and try again.");
+        return;
       }
 
-      if (ocrWorker) {
-        ocrWorker.terminate();
-        ocrWorker = null;
+      // Upscale crop and use grayscale/contrast to help OCR.
+      work.width = Math.max(900, sw * 3);
+      work.height = Math.max(180, sh * 3);
+      const ctx = work.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, work.width, work.height);
+      const pixels = ctx.getImageData(0, 0, work.width, work.height);
+      for (let i = 0; i < pixels.data.length; i += 4) {
+        const gray = 0.299 * pixels.data[i] + 0.587 * pixels.data[i+1] + 0.114 * pixels.data[i+2];
+        const boosted = gray < 175 ? 0 : 255;
+        pixels.data[i] = pixels.data[i+1] = pixels.data[i+2] = boosted;
       }
-    });
+      ctx.putImageData(pixels, 0, 0);
+      preview.width = work.width;
+      preview.height = work.height;
+      preview.getContext("2d").drawImage(work, 0, 0);
 
-    startCamera();
-  </script>
+      status("Barcode detected. Reading the text directly beneath it…");
+      const ocr = await getOcrWorker();
+      const result = await ocr.recognize(work);
+      const raw = result.data.text || "";
+      const candidates = raw.split(/\n+/).map(cleanCode).filter(s => s.length >= 8 && s.length <= 18);
+      // Indian Speed Post labels commonly end with IN. Prefer that pattern if present.
+      const chosen = candidates.find(s => /^[A-Z]{2}[0-9]{9}IN$/.test(s)) ||
+                     candidates.sort((a, b) => b.length - a.length)[0];
 
+      if (!chosen) {
+        status("Barcode detected, but OCR could not read the number clearly.\nTry better lighting, reduce glare, and make the printed number larger in the frame.\nOCR output: " + (raw.trim() || "(none)"));
+        return;
+      }
+
+      codeInput.value = chosen;
+      openFormBtn.disabled = false;
+      againBtn.disabled = false;
+      status("Read: " + chosen + "\nPlease verify every character before opening the form.");
+    } catch (err) {
+      status("Scan failed: " + (err.message || err) +
+        "\nIf BarcodeDetector is unavailable or cannot detect this label, update Android Chrome and retry.");
+    } finally {
+      scanning = false;
+      scanBtn.disabled = !stream;
+    }
+  }
+
+  function openForm() {
+    const value = cleanCode(codeInput.value);
+    if (!value) { status("Please scan or enter the consignment number first."); return; }
+    const url = FORM_BASE_URL + "?" + ENTRY_ID + "=" + encodeURIComponent(value);
+    window.open(url, "_blank", "noopener");
+  }
+
+  function resetForNext() {
+    codeInput.value = "";
+    openFormBtn.disabled = true;
+    againBtn.disabled = true;
+    status("Ready for the next item. Keep the full barcode and printed number in view.");
+  }
+
+  startBtn.addEventListener("click", startCamera);
+  stopBtn.addEventListener("click", stopCamera);
+  scanBtn.addEventListener("click", detectAndRead);
+  openFormBtn.addEventListener("click", openForm);
+  againBtn.addEventListener("click", resetForNext);
+  codeInput.addEventListener("input", () => { openFormBtn.disabled = !cleanCode(codeInput.value); });
+})();
+</script>
 </body>
 </html>
