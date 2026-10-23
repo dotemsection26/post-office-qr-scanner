@@ -1,63 +1,127 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Post Office QR Scanner</title>
-  <script src="https://unpkg.com/html5-qrcode"></script>
+  <title>Post Office Number Scanner</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
   <style>
     body {
       font-family: Arial, sans-serif;
       max-width: 500px;
       margin: 20px auto;
-      padding: 16px;
+      padding: 14px;
     }
 
     h2, p { text-align: center; }
 
-    #reader { width: 100%; }
+    video {
+      width: 100%;
+      border-radius: 8px;
+      background: #222;
+    }
 
-    .btn {
-      display: inline-block;
-      padding: 12px 16px;
-      background: #1a73e8;
-      color: white;
+    .guide {
+      border: 2px dashed #1a73e8;
+      padding: 8px;
+      margin: 8px 0;
+      text-align: center;
+      color: #1a73e8;
+      border-radius: 6px;
+    }
+
+    label {
+      display: block;
+      margin-top: 14px;
+      font-weight: bold;
+    }
+
+    input {
+      box-sizing: border-box;
+      width: 100%;
+      padding: 13px;
+      font-size: 20px;
+      margin-top: 6px;
+    }
+
+    button {
+      width: 100%;
+      padding: 13px;
+      margin-top: 10px;
       border: 0;
       border-radius: 6px;
-      margin: 6px 3px;
+      color: white;
+      background: #1a73e8;
       font-size: 16px;
       cursor: pointer;
     }
 
-    .green { background: #188038; }
-
-    #formFrame {
-      width: 100%;
-      height: 650px;
-      border: 1px solid #ccc;
+    button:disabled {
+      background: #999;
+      cursor: not-allowed;
     }
 
+    .green { background: #188038; }
+    .orange { background: #b45f06; }
+
     #formSection { display: none; }
+
+    iframe {
+      width: 100%;
+      height: 650px;
+      border: 0;
+    }
+
+    #status {
+      font-weight: bold;
+    }
   </style>
 </head>
 
 <body>
-  <h2>Post Office QR Scanner</h2>
-  <p id="status">Starting scanner...</p>
-
-  <div id="reader"></div>
+  <h2>Post Office Number Scanner</h2>
 
   <p>
-    <button id="openForm" class="btn">Open Form</button>
-    <button id="scanNext" class="btn green">Scan Next QR</button>
+    Position the printed numbers near the barcode in the camera view.
   </p>
+
+  <video id="video" autoplay playsinline muted></video>
+
+  <div class="guide">
+    Hold steady and keep the printed numbers clearly visible.
+  </div>
+
+  <button id="captureBtn" disabled>
+    Capture &amp; Read Numbers
+  </button>
+
+  <p id="status">Starting camera...</p>
+
+  <label for="number">Detected number (check and correct if needed)</label>
+  <input id="number" type="text" inputmode="numeric"
+         autocomplete="off" placeholder="Detected number will appear here">
+
+  <button id="openForm" disabled>
+    Open Form with This Number
+  </button>
+
+  <button id="scanNext" class="green">
+    Scan Next Item
+  </button>
+
+  <button id="retryBtn" class="orange">
+    Capture Again
+  </button>
 
   <section id="formSection">
     <h3>Complete Google Form</h3>
+    <p>Submit the form, then tap Scan Next Item above.</p>
     <iframe id="formFrame" title="Google Form"></iframe>
   </section>
+
+  <canvas id="canvas" hidden></canvas>
 
   <script>
     const FORM_BASE_URL =
@@ -65,89 +129,196 @@
 
     const ENTRY_ID = "entry.1334642033";
 
+    const video = document.getElementById("video");
+    const canvas = document.getElementById("canvas");
+    const numberInput = document.getElementById("number");
+    const captureBtn = document.getElementById("captureBtn");
+    const openFormBtn = document.getElementById("openForm");
+    const scanNextBtn = document.getElementById("scanNext");
+    const retryBtn = document.getElementById("retryBtn");
     const status = document.getElementById("status");
-    const reader = document.getElementById("reader");
-    const openForm = document.getElementById("openForm");
-    const scanNext = document.getElementById("scanNext");
     const formSection = document.getElementById("formSection");
     const formFrame = document.getElementById("formFrame");
 
-    let scanner = null;
-    let processed = false;
-    let formUrl = "";
+    let cameraStream = null;
+    let ocrWorker = null;
+    let reading = false;
 
-    async function stopScanner() {
-      if (scanner) {
-        const oldScanner = scanner;
-        scanner = null;
-        try {
-          await oldScanner.clear();
-        } catch (e) {
-          console.log(e);
+    async function startCamera() {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error("Camera requires HTTPS and browser support.");
         }
-      }
-      reader.innerHTML = "";
-    }
 
-    async function startScanner() {
-      await stopScanner();
+        cameraStream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          }
+        });
 
-      processed = false;
-      formUrl = "";
+        video.srcObject = cameraStream;
+        await video.play();
 
-      reader.style.display = "block";
-      formSection.style.display = "none";
-      formFrame.src = "about:blank";
-
-      status.textContent = "Point the camera at a QR code.";
-
-      scanner = new Html5QrcodeScanner(
-        "reader",
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        false
-      );
-
-      scanner.render(
-        async function (decodedText) {
-          if (processed) return;
-          processed = true;
-
-          const url = new URL(FORM_BASE_URL);
-          url.searchParams.set("usp", "pp_url");
-          url.searchParams.set(ENTRY_ID, decodedText);
-          formUrl = url.toString();
-
-          status.textContent =
-            "QR scanned. Tap Open Form to complete the entry.";
-
-          await stopScanner();
-        },
-        function () {}
-      );
-    }
-
-    openForm.addEventListener("click", function () {
-      if (!formUrl) {
+        captureBtn.disabled = false;
         status.textContent =
-          "Please scan a QR code first. Then tap Open Form.";
+          "Camera ready. Position the printed number and capture.";
+      } catch (error) {
+        status.textContent =
+          "Camera error: " + error.message +
+          ". Allow camera access and reload this HTTPS page.";
+      }
+    }
+
+    async function getOCRWorker() {
+      if (!ocrWorker) {
+        status.textContent = "Loading text recognition. Please wait...";
+        ocrWorker = await Tesseract.createWorker("eng");
+        await ocrWorker.setParameters({
+          tessedit_char_whitelist: "0123456789",
+          tessedit_pageseg_mode: "7"
+        });
+      }
+
+      return ocrWorker;
+    }
+
+    async function readNumber() {
+      if (reading) return;
+      if (!video.videoWidth) {
+        status.textContent = "Camera is not ready. Please wait.";
         return;
       }
 
-      const url = new URL(formUrl);
+      reading = true;
+      captureBtn.disabled = true;
+      openFormBtn.disabled = true;
+      status.textContent = "Reading numbers from image...";
+
+      try {
+        // Capture the camera image.
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+
+        const ctx = canvas.getContext("2d", {
+          willReadFrequently: true
+        });
+
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        // Increase contrast and convert to black and white.
+        const image = ctx.getImageData(
+          0, 0, canvas.width, canvas.height
+        );
+
+        for (let i = 0; i < image.data.length; i += 4) {
+          const gray =
+            0.299 * image.data[i] +
+            0.587 * image.data[i + 1] +
+            0.114 * image.data[i + 2];
+
+          const value = gray > 145 ? 255 : 0;
+
+          image.data[i] = value;
+          image.data[i + 1] = value;
+          image.data[i + 2] = value;
+        }
+
+        ctx.putImageData(image, 0, 0);
+
+        const worker = await getOCRWorker();
+        status.textContent = "Recognising printed digits...";
+
+        const result = await worker.recognize(canvas);
+        const text = result.data.text || "";
+
+        // Extract the longest digit sequence.
+        const groups = text.match(/[0-9]+/g) || [];
+        groups.sort((a, b) => b.length - a.length);
+
+        if (!groups.length) {
+          status.textContent =
+            "No digits detected. Move closer, improve lighting and try again.";
+          numberInput.value = "";
+          openFormBtn.disabled = true;
+        } else {
+          numberInput.value = groups[0];
+          openFormBtn.disabled = false;
+
+          status.textContent =
+            "Digits detected. Verify the number before opening the form.";
+        }
+      } catch (error) {
+        status.textContent =
+          "Recognition failed: " + error.message +
+          ". Please try capturing again.";
+      } finally {
+        reading = false;
+        captureBtn.disabled = false;
+      }
+    }
+
+    numberInput.addEventListener("input", function () {
+      openFormBtn.disabled = !numberInput.value.trim();
+    });
+
+    openFormBtn.addEventListener("click", function () {
+      const number = numberInput.value.trim();
+
+      if (!number) {
+        status.textContent = "Please detect or enter a number first.";
+        return;
+      }
+
+      const url = new URL(FORM_BASE_URL);
+      url.searchParams.set("usp", "pp_url");
+      url.searchParams.set(ENTRY_ID, number);
       url.searchParams.set("embedded", "true");
 
       formFrame.src = url.toString();
       formSection.style.display = "block";
 
       status.textContent =
-        "Complete and submit the form below.";
+        "Verify the prefilled number, complete and submit the form.";
+
+      formSection.scrollIntoView({ behavior: "smooth" });
     });
 
-    scanNext.addEventListener("click", function () {
-      startScanner();
+    scanNextBtn.addEventListener("click", function () {
+      numberInput.value = "";
+      openFormBtn.disabled = true;
+
+      formFrame.src = "about:blank";
+      formSection.style.display = "none";
+
+      status.textContent =
+        "Ready for the next item. Position the printed number and capture.";
+
+      window.scrollTo({ top: 0, behavior: "smooth" });
     });
 
-    startScanner();
+    retryBtn.addEventListener("click", function () {
+      numberInput.value = "";
+      openFormBtn.disabled = true;
+      status.textContent = "Ready. Capture the printed number again.";
+    });
+
+    captureBtn.addEventListener("click", readNumber);
+
+    window.addEventListener("pagehide", function () {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+      }
+
+      if (ocrWorker) {
+        ocrWorker.terminate();
+        ocrWorker = null;
+      }
+    });
+
+    startCamera();
   </script>
 </body>
 </html>
