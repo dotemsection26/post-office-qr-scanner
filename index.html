@@ -1,212 +1,153 @@
-<!doctype html>
+
+<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Speed Post Label Scanner</title>
-<style>
-  body { font-family: Arial, sans-serif; margin: 0; padding: 16px; max-width: 760px; margin-inline: auto; color: #222; }
-  h2 { margin-top: 0; }
-  button { font-size: 16px; padding: 12px 16px; margin: 6px 4px 6px 0; border: 0; border-radius: 8px; background: #174ea6; color: white; }
-  button.secondary { background: #555; }
-  button:disabled { opacity: .5; }
-  video { width: 100%; max-height: 55vh; background: #111; border-radius: 8px; }
-  canvas, #cropPreview { width: 100%; max-height: 220px; object-fit: contain; border: 1px solid #ccc; border-radius: 6px; background: #fafafa; }
-  label { display: block; margin-top: 12px; font-weight: bold; }
-  input { width: 100%; box-sizing: border-box; font-size: 20px; padding: 10px; margin-top: 6px; }
-  #status { padding: 10px; background: #f1f3f4; border-radius: 6px; min-height: 22px; white-space: pre-wrap; }
-  #formFrame { width: 100%; height: 70vh; border: 1px solid #bbb; margin-top: 14px; }
-  .hint { color: #555; font-size: 14px; line-height: 1.45; }
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Post Office QR Scanner</title>
+  <script src="https://unpkg.com/html5-qrcode"></script>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 500px;
+      margin: 20px auto;
+      padding: 16px;
+    }
+
+    h2, p { text-align: center; }
+
+    #reader { width: 100%; }
+
+    .btn {
+      display: inline-block;
+      padding: 12px 16px;
+      background: #1a73e8;
+      color: white;
+      border: 0;
+      border-radius: 6px;
+      margin: 6px 3px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+
+    .green { background: #188038; }
+
+    #formFrame {
+      width: 100%;
+      height: 650px;
+      border: 1px solid #ccc;
+    }
+
+    #formSection { display: none; }
+  </style>
 </head>
+
 <body>
-<h2>Speed Post Label Scanner</h2>
-<p class="hint">Keep the barcode and the printed consignment number below it fully visible. Allow camera access when prompted.</p>
+  <h2>Post Office QR Scanner</h2>
+  <p id="status">Starting scanner...</p>
 
-<video id="video" autoplay playsinline muted></video>
-<div>
-  <button id="startBtn">Start camera</button>
-  <button id="scanBtn" disabled>Detect barcode & read number</button>
-  <button id="stopBtn" class="secondary" disabled>Stop camera</button>
-</div>
-<div id="status">Ready. Start the camera to begin.</div>
+  <div id="reader"></div>
 
-<label for="code">Detected consignment number (check before submitting)</label>
-<input id="code" autocomplete="off" autocapitalize="characters" placeholder="e.g. ED276659005IN">
-<div>
-  <button id="openFormBtn" disabled>Open Google Form with this number</button>
-  <button id="againBtn" class="secondary" disabled>Scan next item</button>
-</div>
+  <p>
+    <button id="openForm" class="btn">Open Form</button>
+    <button id="scanNext" class="btn green">Scan Next QR</button>
+  </p>
 
-<h3>Text crop preview</h3>
-<p class="hint">This preview shows the area cropped from directly below the detected barcode.</p>
-<canvas id="cropPreview" width="800" height="180"></canvas>
-<canvas id="work" hidden></canvas>
+  <section id="formSection">
+    <h3>Complete Google Form</h3>
+    <iframe id="formFrame" title="Google Form"></iframe>
+  </section>
 
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-<script>
-(() => {
-  const FORM_BASE_URL = "https://docs.google.com/forms/d/e/1FAIpQLSdbwzyvv0SbGIu6UtU9Q5oRsg0XXCBsguuli7ZnFYSzVb9BNw/viewform";
-  const ENTRY_ID = "entry.1334642033";
+  <script>
+    const FORM_BASE_URL =
+      "https://docs.google.com/forms/d/e/1FAIpQLSdbwzyvv0SbGIu6UtU9Q5oRsg0XXCBsguuli7ZnFYSzVb9BNw/viewform";
 
-  const video = document.getElementById("video");
-  const statusEl = document.getElementById("status");
-  const codeInput = document.getElementById("code");
-  const startBtn = document.getElementById("startBtn");
-  const scanBtn = document.getElementById("scanBtn");
-  const stopBtn = document.getElementById("stopBtn");
-  const openFormBtn = document.getElementById("openFormBtn");
-  const againBtn = document.getElementById("againBtn");
-  const preview = document.getElementById("cropPreview");
-  const work = document.getElementById("work");
-  let stream = null;
-  let scanning = false;
-  let worker = null;
+    const ENTRY_ID = "entry.1334642033";
 
-  function status(message) { statusEl.textContent = message; }
-  function cleanCode(text) {
-    return (text || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-  }
+    const status = document.getElementById("status");
+    const reader = document.getElementById("reader");
+    const openForm = document.getElementById("openForm");
+    const scanNext = document.getElementById("scanNext");
+    const formSection = document.getElementById("formSection");
+    const formFrame = document.getElementById("formFrame");
 
-  async function startCamera() {
-    try {
-      if (!("BarcodeDetector" in window)) {
-        status("This Chrome version does not provide BarcodeDetector. Please update Chrome and try again.");
-        return;
+    let scanner = null;
+    let processed = false;
+    let formUrl = "";
+
+    async function stopScanner() {
+      if (scanner) {
+        const oldScanner = scanner;
+        scanner = null;
+        try {
+          await oldScanner.clear();
+        } catch (e) {
+          console.log(e);
+        }
       }
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }
-      });
-      video.srcObject = stream;
-      await video.play();
-      scanBtn.disabled = false;
-      stopBtn.disabled = false;
-      startBtn.disabled = true;
-      status("Camera ready. Hold the full barcode steady, with the printed number visible below it, then tap Detect barcode & read number.");
-    } catch (err) {
-      status("Could not start camera: " + (err.name || "") + " " + (err.message || err) +
-        "\nOpen this page using its HTTPS GitHub Pages address and allow Camera permission in Chrome site settings.");
+      reader.innerHTML = "";
     }
-  }
 
-  function stopCamera() {
-    if (stream) stream.getTracks().forEach(t => t.stop());
-    stream = null;
-    video.srcObject = null;
-    startBtn.disabled = false;
-    scanBtn.disabled = true;
-    stopBtn.disabled = true;
-    status("Camera stopped.");
-  }
+    async function startScanner() {
+      await stopScanner();
 
-  async function getOcrWorker() {
-    if (!worker) {
-      status("Loading OCR engine… this may take a little while on first use.");
-      worker = await Tesseract.createWorker("eng");
-      await worker.setParameters({
-        tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
-        preserve_interword_spaces: "0"
-      });
+      processed = false;
+      formUrl = "";
+
+      reader.style.display = "block";
+      formSection.style.display = "none";
+      formFrame.src = "about:blank";
+
+      status.textContent = "Point the camera at a QR code.";
+
+      scanner = new Html5QrcodeScanner(
+        "reader",
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        false
+      );
+
+      scanner.render(
+        async function (decodedText) {
+          if (processed) return;
+          processed = true;
+
+          const url = new URL(FORM_BASE_URL);
+          url.searchParams.set("usp", "pp_url");
+          url.searchParams.set(ENTRY_ID, decodedText);
+          formUrl = url.toString();
+
+          status.textContent =
+            "QR scanned. Tap Open Form to complete the entry.";
+
+          await stopScanner();
+        },
+        function () {}
+      );
     }
-    return worker;
-  }
 
-  async function detectAndRead() {
-    if (!video.videoWidth || scanning) return;
-    scanning = true;
-    scanBtn.disabled = true;
-    openFormBtn.disabled = true;
-    try {
-      const detector = new BarcodeDetector({
-        formats: ["code_128", "code_39", "code_93", "codabar", "itf", "ean_13", "ean_8", "upc_a", "upc_e"]
-      });
-      status("Looking for the barcode…");
-      const found = await detector.detect(video);
-      if (!found.length) {
-        status("No barcode detected. Move closer, keep the label flat and well lit, and try again.");
+    openForm.addEventListener("click", function () {
+      if (!formUrl) {
+        status.textContent =
+          "Please scan a QR code first. Then tap Open Form.";
         return;
       }
 
-      // Prefer the widest detected 1D barcode.
-      const item = found.slice().sort((a, b) => b.boundingBox.width - a.boundingBox.width)[0];
-      const b = item.boundingBox;
-      const vw = video.videoWidth, vh = video.videoHeight;
+      const url = new URL(formUrl);
+      url.searchParams.set("embedded", "true");
 
-      // Crop just below the bars, where the printed consignment number is expected.
-      const sx = Math.max(0, Math.floor(b.x - b.width * 0.08));
-      const sw = Math.min(vw - sx, Math.ceil(b.width * 1.16));
-      const sy = Math.max(0, Math.floor(b.y + b.height * 0.88));
-      const sh = Math.min(vh - sy, Math.max(Math.ceil(b.height * 0.62), 55));
-      if (sh < 10 || sw < 10) {
-        status("Barcode was detected, but the number below it is outside the camera frame. Move the label slightly upward and try again.");
-        return;
-      }
+      formFrame.src = url.toString();
+      formSection.style.display = "block";
 
-      // Upscale crop and use grayscale/contrast to help OCR.
-      work.width = Math.max(900, sw * 3);
-      work.height = Math.max(180, sh * 3);
-      const ctx = work.getContext("2d", { willReadFrequently: true });
-      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, work.width, work.height);
-      const pixels = ctx.getImageData(0, 0, work.width, work.height);
-      for (let i = 0; i < pixels.data.length; i += 4) {
-        const gray = 0.299 * pixels.data[i] + 0.587 * pixels.data[i+1] + 0.114 * pixels.data[i+2];
-        const boosted = gray < 175 ? 0 : 255;
-        pixels.data[i] = pixels.data[i+1] = pixels.data[i+2] = boosted;
-      }
-      ctx.putImageData(pixels, 0, 0);
-      preview.width = work.width;
-      preview.height = work.height;
-      preview.getContext("2d").drawImage(work, 0, 0);
+      status.textContent =
+        "Complete and submit the form below.";
+    });
 
-      status("Barcode detected. Reading the text directly beneath it…");
-      const ocr = await getOcrWorker();
-      const result = await ocr.recognize(work);
-      const raw = result.data.text || "";
-      const candidates = raw.split(/\n+/).map(cleanCode).filter(s => s.length >= 8 && s.length <= 18);
-      // Indian Speed Post labels commonly end with IN. Prefer that pattern if present.
-      const chosen = candidates.find(s => /^[A-Z]{2}[0-9]{9}IN$/.test(s)) ||
-                     candidates.sort((a, b) => b.length - a.length)[0];
+    scanNext.addEventListener("click", function () {
+      startScanner();
+    });
 
-      if (!chosen) {
-        status("Barcode detected, but OCR could not read the number clearly.\nTry better lighting, reduce glare, and make the printed number larger in the frame.\nOCR output: " + (raw.trim() || "(none)"));
-        return;
-      }
-
-      codeInput.value = chosen;
-      openFormBtn.disabled = false;
-      againBtn.disabled = false;
-      status("Read: " + chosen + "\nPlease verify every character before opening the form.");
-    } catch (err) {
-      status("Scan failed: " + (err.message || err) +
-        "\nIf BarcodeDetector is unavailable or cannot detect this label, update Android Chrome and retry.");
-    } finally {
-      scanning = false;
-      scanBtn.disabled = !stream;
-    }
-  }
-
-  function openForm() {
-    const value = cleanCode(codeInput.value);
-    if (!value) { status("Please scan or enter the consignment number first."); return; }
-    const url = FORM_BASE_URL + "?" + ENTRY_ID + "=" + encodeURIComponent(value);
-    window.open(url, "_blank", "noopener");
-  }
-
-  function resetForNext() {
-    codeInput.value = "";
-    openFormBtn.disabled = true;
-    againBtn.disabled = true;
-    status("Ready for the next item. Keep the full barcode and printed number in view.");
-  }
-
-  startBtn.addEventListener("click", startCamera);
-  stopBtn.addEventListener("click", stopCamera);
-  scanBtn.addEventListener("click", detectAndRead);
-  openFormBtn.addEventListener("click", openForm);
-  againBtn.addEventListener("click", resetForNext);
-  codeInput.addEventListener("input", () => { openFormBtn.disabled = !cleanCode(codeInput.value); });
-})();
-</script>
+    startScanner();
+  </script>
 </body>
 </html>
